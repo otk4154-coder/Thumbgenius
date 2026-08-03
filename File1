@@ -1,0 +1,423 @@
+[Reasoning]
+User wants the complete current code of the app shared. Let me read all the files I created to get their current content.
+
+Tüm güncel kod dosyalarını okuyup sana paylaşıyorum.
+
+### read_file
+Arguments:
+{
+  "file_path": "base44/functions/generateThumbnailImage/entry.ts"
+}
+Result:
+1: import { createClientFromRequest } from 'npm...
+
+---
+
+### read_file
+Arguments:
+{
+  "file_path": "src/lib/thumbnailCanvas.js"
+}
+Result:
+1: const palettes = {
+   2:   spotlight: ['#090...
+
+---
+
+### read_file
+Arguments:
+{
+  "file_path": "src/components/thumbnail/ThumbnailCanvas.jsx"
+}
+Result:
+1: import React, { useEffect, useRef, useState ...
+
+---
+
+### read_file
+Arguments:
+{
+  "file_path": "src/components/thumbnail/TextControls.jsx"
+}
+Result:
+1: import React from 'react';
+   2: import { La...
+
+---
+
+### read_file
+Arguments:
+{
+  "file_path": "src/components/thumbnail/BackgroundControls.jsx"
+}
+Result:
+1: import React from 'react';
+   2: import { Bu...
+
+---
+
+### read_file
+Arguments:
+{
+  "file_path": "src/components/thumbnail/ImageControls.jsx"
+}
+Result:
+1: import React, { useState } from 'react';
+   ...
+
+---
+
+### read_file
+Arguments:
+{
+  "file_path": "src/components/thumbnail/DownloadBar.jsx"
+}
+Result:
+1: import React from 'react';
+   2: import { Do...
+
+---
+
+### read_file
+Arguments:
+{
+  "file_path": "src/pages/Home.jsx"
+}
+Result:
+1: import React, { useRef, useState } from 'rea...
+
+İşte uygulamanın güncel kodlarının tamamı, dosya dosya:
+
+---
+
+## 1. Backend Fonksiyonu — `base44/functions/generateThumbnailImage/entry.ts`
+
+```ts
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.40';
+
+export default async function(req: Request): Promise<Response> {
+  try {
+    const base44 = createClientFromRequest(req);
+    const user = await base44.auth.me();
+    if (!user) return Response.json({ error: 'Yetkisiz erişim' }, { status: 401 });
+
+    const { prompt } = await req.json();
+    if (typeof prompt !== 'string' || prompt.trim().length < 3 || prompt.length > 200) {
+      return Response.json({ error: 'İstek 3-200 karakter olmalı' }, { status: 400 });
+    }
+
+    const result = await base44.asServiceRole.integrations.Core.GenerateImage({
+      prompt: `Create a cinematic 16:9 YouTube thumbnail background, no words, no letters, no logos, strong focal point, dramatic lighting, high contrast, professional composition. Subject: ${prompt.trim()}`
+    });
+    return Response.json({ url: result.url });
+  } catch (error) {
+    return Response.json({ error: error.message }, { status: 500 });
+  }
+}
+```
+
+---
+
+## 2. Canvas Çizim Mantığı — `src/lib/thumbnailCanvas.js`
+
+```js
+const palettes = {
+  spotlight: ['#09090b', '#dc2626', '#facc15'],
+  midnight: ['#020617', '#1e3a8a', '#38bdf8'],
+  fresh: ['#f8fafc', '#dbeafe', '#2563eb'],
+  blank: ['#18181b', '#18181b', '#ffffff'],
+};
+
+const coverImage = (ctx, image, width, height) => {
+  const scale = Math.max(width / image.width, height / image.height);
+  const x = (width - image.width * scale) / 2;
+  const y = (height - image.height * scale) / 2;
+  ctx.drawImage(image, x, y, image.width * scale, image.height * scale);
+};
+
+export const drawThumbnail = (canvas, settings, image) => {
+  const ctx = canvas.getContext('2d');
+  const [start, end, accent] = palettes[settings.template];
+  const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+  gradient.addColorStop(0, start);
+  gradient.addColorStop(1, end);
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  if (image) {
+    coverImage(ctx, image, canvas.width, canvas.height);
+    const shade = ctx.createLinearGradient(0, 0, canvas.width, 0);
+    shade.addColorStop(0, 'rgba(0,0,0,.84)');
+    shade.addColorStop(0.62, 'rgba(0,0,0,.18)');
+    shade.addColorStop(1, 'rgba(0,0,0,.05)');
+    ctx.fillStyle = shade;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+  ctx.fillStyle = accent;
+  ctx.fillRect(72, 86, 145, 12);
+  ctx.fillStyle = settings.template === 'fresh' && !image ? '#0f172a' : '#ffffff';
+  ctx.font = '900 82px Arial, sans-serif';
+  ctx.textBaseline = 'top';
+  const words = (settings.title || 'VİDEO BAŞLIĞI').toLocaleUpperCase('tr-TR').split(' ');
+  let line = '', y = 130;
+  words.forEach((word) => {
+    const test = `${line}${word} `;
+    if (ctx.measureText(test).width > 780 && line) {
+      ctx.fillText(line.trim(), 72, y); line = `${word} `; y += 92;
+    } else line = test;
+  });
+  ctx.fillText(line.trim(), 72, y);
+  ctx.font = '600 30px Arial, sans-serif';
+  ctx.fillStyle = accent;
+  ctx.fillText(settings.subtitle || 'İzlemeye değer içerik', 76, Math.min(y + 112, 610));
+};
+```
+
+---
+
+## 3. Önizleme Canvas — `src/components/thumbnail/ThumbnailCanvas.jsx`
+
+```jsx
+import React, { useEffect, useRef, useState } from 'react';
+import { drawThumbnail } from '@/lib/thumbnailCanvas';
+
+export default function ThumbnailCanvas({ settings, imageUrl, canvasRef }) {
+  const localRef = useRef(null);
+  const [image, setImage] = useState(null);
+
+  useEffect(() => {
+    if (!imageUrl) return setImage(null);
+    const next = new Image();
+    next.crossOrigin = 'anonymous';
+    next.onload = () => setImage(next);
+    next.src = imageUrl;
+  }, [imageUrl]);
+
+  useEffect(() => {
+    const canvas = localRef.current;
+    if (canvas) drawThumbnail(canvas, settings, image);
+  }, [settings, image]);
+
+  return (
+    <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-2xl shadow-primary/10">
+      <canvas ref={(node) => { localRef.current = node; canvasRef.current = node; }} width="1280" height="720" className="block aspect-video w-full" aria-label="YouTube thumbnail önizlemesi" />
+    </div>
+  );
+}
+```
+
+---
+
+## 4. Metin Kontrolleri — `src/components/thumbnail/TextControls.jsx`
+
+```jsx
+import React from 'react';
+import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
+
+export default function TextControls({ settings, setSettings }) {
+  const update = (key) => (event) => setSettings((current) => ({ ...current, [key]: event.target.value }));
+  return (
+    <section className="space-y-4">
+      <div><p className="text-xs font-bold uppercase tracking-widest text-primary">01 · Metin</p><h2 className="mt-1 font-heading text-lg font-bold">Mesajını netleştir</h2></div>
+      <div className="space-y-2"><Label htmlFor="title">Ana başlık</Label><Input id="title" value={settings.title} onChange={update('title')} maxLength={44} placeholder="VİDEO BAŞLIĞI" /></div>
+      <div className="space-y-2"><Label htmlFor="subtitle">Alt başlık</Label><Input id="subtitle" value={settings.subtitle} onChange={update('subtitle')} maxLength={54} placeholder="Kısa ve merak uyandırıcı" /></div>
+    </section>
+  );
+}
+```
+
+---
+
+## 5. Arka Plan Kontrolleri — `src/components/thumbnail/BackgroundControls.jsx`
+
+```jsx
+import React from 'react';
+import { Button } from '@/components/ui/button';
+
+const templates = [
+  { id: 'spotlight', name: 'Spotlight', className: 'bg-primary text-primary-foreground' },
+  { id: 'midnight', name: 'Gece', className: 'bg-secondary text-secondary-foreground' },
+  { id: 'fresh', name: 'Ferah', className: 'bg-accent text-accent-foreground' },
+  { id: 'blank', name: 'Sade', className: 'bg-muted text-muted-foreground' },
+];
+
+export default function BackgroundControls({ template, onChange }) {
+  return (
+    <section className="space-y-3">
+      <div><p className="text-xs font-bold uppercase tracking-widest text-primary">02 · Arka plan</p><h2 className="mt-1 font-heading text-lg font-bold">Bir görünüm seç</h2></div>
+      <div className="grid grid-cols-2 gap-2">
+        {templates.map((item) => <Button key={item.id} type="button" variant="outline" onClick={() => onChange(item.id)} className={`h-12 justify-start transition-all ${item.className} ${template === item.id ? 'ring-2 ring-ring ring-offset-2' : 'opacity-75'}`}>{item.name}</Button>)}
+      </div>
+    </section>
+  );
+}
+```
+
+---
+
+## 6. Görsel Kontrolleri — `src/components/thumbnail/ImageControls.jsx`
+
+```jsx
+import React, { useState } from 'react';
+import { Sparkles, Upload } from 'lucide-react';
+import { base44 } from '@/api/base44Client';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+
+export default function ImageControls({ onImage }) {
+  const [prompt, setPrompt] = useState('');
+  const [loading, setLoading] = useState(false);
+  const upload = (event) => { const file = event.target.files?.[0]; if (file) onImage(URL.createObjectURL(file)); };
+  const generate = async () => {
+    if (prompt.trim().length < 3) return;
+    setLoading(true);
+    const response = await base44.functions.invoke('generateThumbnailImage', { prompt });
+    onImage(response.data.url);
+    setLoading(false);
+  };
+  return (
+    <section className="space-y-3">
+      <div><p className="text-xs font-bold uppercase tracking-widest text-primary">03 · Görsel</p><h2 className="mt-1 font-heading text-lg font-bold">Kareyi güçlendir</h2></div>
+      <label className="flex h-11 cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed border-input text-sm font-semibold transition-colors hover:bg-accent"><Upload className="h-4 w-4" /> Kendi görselini yükle<input type="file" accept="image/*" className="hidden" onChange={upload} /></label>
+      <div className="flex gap-2"><Input value={prompt} onChange={(event) => setPrompt(event.target.value)} maxLength={200} placeholder="Örn: uzayda neon araba" /><Button type="button" onClick={generate} disabled={loading || prompt.trim().length < 3} aria-label="Yapay zekâ ile görsel üret"><Sparkles className={`h-4 w-4 ${loading ? 'animate-pulse' : ''}`} /></Button></div>
+      <Button type="button" variant="ghost" className="w-full text-muted-foreground" onClick={() => onImage('')}>Görselsiz devam et</Button>
+    </section>
+  );
+}
+```
+
+---
+
+## 7. İndirme Çubuğu — `src/components/thumbnail/DownloadBar.jsx`
+
+```jsx
+import React from 'react';
+import { Download } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+
+export default function DownloadBar({ canvasRef }) {
+  const save = (format) => {
+    const canvas = canvasRef.current;
+    const link = document.createElement('a');
+    link.download = `youtube-thumbnail.${format}`;
+    link.href = canvas.toDataURL(`image/${format === 'jpg' ? 'jpeg' : 'png'}`, 0.94);
+    link.click();
+  };
+  return (
+    <div className="mt-5 flex flex-col gap-3 rounded-2xl border border-border bg-card p-4 sm:flex-row sm:items-center sm:justify-between">
+      <div><p className="font-heading font-bold">1280 × 720 px</p><p className="text-sm text-muted-foreground">YouTube için hazır yüksek çözünürlük</p></div>
+      <div className="flex gap-2"><Button onClick={() => save('png')}><Download className="mr-2 h-4 w-4" />PNG indir</Button><Button variant="outline" onClick={() => save('jpg')}>JPG indir</Button></div>
+    </div>
+  );
+}
+```
+
+---
+
+## 8. Ana Sayfa — `src/pages/Home.jsx`
+
+```jsx
+import React, { useRef, useState } from 'react';
+import { Youtube } from 'lucide-react';
+import TextControls from '@/components/thumbnail/TextControls';
+import BackgroundControls from '@/components/thumbnail/BackgroundControls';
+import ImageControls from '@/components/thumbnail/ImageControls';
+import ThumbnailCanvas from '@/components/thumbnail/ThumbnailCanvas';
+import DownloadBar from '@/components/thumbnail/DownloadBar';
+
+export default function Home() {
+  const canvasRef = useRef(null);
+  const [imageUrl, setImageUrl] = useState('');
+  const [settings, setSettings] = useState({ title: 'BU VİDEOYU KAÇIRMA', subtitle: 'Sadece 10 dakikada öğren', template: 'spotlight' });
+  return (
+    <main className="min-h-screen bg-background px-4 py-6 text-foreground sm:px-6 lg:px-8 lg:py-8">
+      <header className="mx-auto mb-7 flex max-w-7xl items-center justify-between">
+        <div className="flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-xl bg-primary text-primary-foreground"><Youtube className="h-5 w-5" /></span><div><h1 className="font-display text-xl font-black tracking-tight sm:text-2xl">Thumbnail Studio</h1><p className="text-xs text-muted-foreground">Tık kazandıran kapaklar üret</p></div></div>
+        <span className="hidden rounded-full bg-secondary px-3 py-1 text-xs font-bold text-secondary-foreground sm:block">YOUTUBE · 16:9</span>
+      </header>
+      <div className="mx-auto grid max-w-7xl gap-6 lg:grid-cols-[340px_1fr]">
+        <aside className="space-y-7 rounded-2xl border border-border bg-card p-5 shadow-sm lg:max-h-[calc(100vh-120px)] lg:overflow-y-auto"><TextControls settings={settings} setSettings={setSettings} /><BackgroundControls template={settings.template} onChange={(template) => setSettings((current) => ({ ...current, template }))} /><ImageControls onImage={setImageUrl} /></aside>
+        <section className="flex min-w-0 flex-col justify-center"><div className="mb-3 flex items-center justify-between"><p className="text-sm font-semibold">Canlı önizleme</p><p className="text-xs text-muted-foreground">Değişiklikler anında görünür</p></div><ThumbnailCanvas settings={settings} imageUrl={imageUrl} canvasRef={canvasRef} /><DownloadBar canvasRef={canvasRef} /></section>
+      </div>
+    </main>
+  );
+}
+```
+
+---
+
+## 9. `src/App.jsx` İçindeki İlgili Değişiklikler
+
+**Sayfa import'u:**
+```jsx
+import Home from '@/pages/Home';
+```
+
+**Route tanımı (`<Routes>` içine eklenen):**
+```jsx
+<Route path="/" element={<Home />} />
+```
+
+---
+
+## 10. `src/index.css` İçindeki İlgili Değişiklikler
+
+**Font importu (en üste, `@tailwind base;` öncesine):**
+```css
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@600;700&display=swap');
+```
+
+**Açık tema (light) renkleri — `:root` içindeki güncellenen değerler:**
+```css
+--background: 220 33% 98%;
+--foreground: 222 47% 11%;
+--card: 0 0% 100%;
+--card-foreground: 222 47% 11%;
+--popover: 0 0% 100%;
+--popover-foreground: 222 47% 11%;
+--primary: 0 84% 55%;
+--primary-foreground: 0 0% 100%;
+--secondary: 222 47% 11%;
+--secondary-foreground: 0 0% 100%;
+--muted: 220 20% 94%;
+--muted-foreground: 215 16% 47%;
+--accent: 47 96% 53%;
+--accent-foreground: 222 47% 11%;
+--destructive: 0 72% 51%;
+--destructive-foreground: 0 0% 100%;
+--border: 220 18% 88%;
+--input: 220 18% 84%;
+--ring: 0 84% 55%;
+```
+
+**Karanlık tema (dark) renkleri — `.dark` içindeki güncellenen değerler:**
+```css
+--background: 222 47% 7%;
+--foreground: 210 40% 98%;
+--card: 222 40% 10%;
+--card-foreground: 210 40% 98%;
+--popover: 222 40% 10%;
+--popover-foreground: 210 40% 98%;
+--primary: 0 84% 60%;
+--primary-foreground: 0 0% 100%;
+--secondary: 217 33% 18%;
+--secondary-foreground: 210 40% 98%;
+--muted: 217 33% 17%;
+--muted-foreground: 215 20% 65%;
+--accent: 47 96% 53%;
+--accent-foreground: 222 47% 11%;
+--destructive: 0 63% 31%;
+--destructive-foreground: 210 40% 98%;
+--border: 217 33% 20%;
+--input: 217 33% 24%;
+--ring: 0 84% 60%;
+```
+
+**Font token'ları:**
+```css
+--font-heading: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
+--font-body: 'Manrope', ui-sans-serif, system-ui, sans-serif;
+--font-display: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
+```
+
+Uygulamanın tüm güncel kodu yukarıdaki 10 dosyada/parçada mevcut — başka bir dosya veya satır eklenmedi.
